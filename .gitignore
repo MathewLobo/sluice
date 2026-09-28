@@ -1,0 +1,11 @@
+# Maven build output
+target/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+
+# Local test data
+*.log
+*.dat

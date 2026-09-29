@@ -22,14 +22,26 @@ public class Agent {
 
         try (BufferedReader br = Files.newBufferedReader(filePath)) {
 
-            String line;
+            StringBuilder lineBuilder = new StringBuilder();
+            int charCode;
             int count = 1;
+
             while (true) {
 
-                line = br.readLine();
-                if (line != null) {
-                    System.out.println("Line " +count+ ": " + line);
-                    count += 1;
+                charCode = br.read();
+                if (charCode != -1){
+                    char c = (char) charCode;
+
+                    if (c == '\n') {
+                        // Since we reached a new line we print the line
+                        System.out.println("Line " + count + ": " + lineBuilder.toString());
+                        lineBuilder.setLength(0);
+                        count +=1;
+                    }
+                    else if(c != '\r'){
+                        lineBuilder.append(c);
+                    }
+
                 } else {
                     Thread.sleep(500);
                 }
@@ -39,7 +51,7 @@ public class Agent {
             System.err.println("Error Reading the File: " + e.getMessage());
             System.exit(1);
         } catch (InterruptedException e) {
-            System.err.println("Tailer interupted:" + e.getMessage());
+            System.err.println("Tailer interrupted: " + e.getMessage());
             Thread.currentThread().interrupt();
             System.exit(1);
         }

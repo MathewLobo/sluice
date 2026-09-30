@@ -5,23 +5,26 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 public class LogTailer {
 
     private static final int POLL_INTERVAL_MS = 500;
 
     private final Path filePath;
+    private final Consumer<String> lineConsumer;
 
-    public LogTailer(Path filePath) {  // checks if file exists plus if its valid
+    public LogTailer(Path filePath, Consumer<String> lineConsumer) {  // checks if file exists plus if its valid
         
-        this.filePath = Objects.requireNonNull(filePath, "File path cannot be Null");
+        this.filePath = Objects.requireNonNull(filePath, "filePath cannot be null");
+        this.lineConsumer = Objects.requireNonNull(lineConsumer, "lineConsumer cannot be null");
 
         if (!Files.exists(this.filePath)) {
-            throw new IllegalArgumentException(": Target log file does not exist: " + this.filePath.toAbsolutePath());
+            throw new IllegalArgumentException("Target log file does not exist: " + this.filePath.toAbsolutePath());
         }
 
         if (Files.isDirectory(this.filePath)) {
-            throw new IllegalArgumentException(": Path points to a directory, not a file: " + this.filePath.toAbsolutePath());
+            throw new IllegalArgumentException("Path points to a directory, not a file: " + this.filePath.toAbsolutePath());
         }
     }
 
@@ -31,7 +34,6 @@ public class LogTailer {
 
             StringBuilder lineBuilder = new StringBuilder();
             int charCode;
-            int count = 1;
 
             while (true) {
 
@@ -40,10 +42,9 @@ public class LogTailer {
                     char c = (char) charCode;
 
                     if (c == '\n') {
-                        // Since we reached a new line we print the line
-                        System.out.println("Line " + count + ": " + lineBuilder.toString());
+                        // Complete line found -> hand it to consumer
+                        this.lineConsumer.accept(lineBuilder.toString());
                         lineBuilder.setLength(0);
-                        count += 1;
                     } else if (c != '\r') {
                         lineBuilder.append(c);
                     }

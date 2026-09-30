@@ -13,7 +13,7 @@ public class Agent {
 
 
         try {
-            LogTailer tailer = new LogTailer(filePath);
+            LogTailer tailer = new LogTailer(filePath, line -> System.out.println(line));
             tailer.run();
 
         } catch (IllegalArgumentException e){

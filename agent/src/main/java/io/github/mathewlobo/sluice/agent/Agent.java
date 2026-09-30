@@ -13,14 +13,16 @@ public class Agent {
 
 
         try {
-            LineBatcher batcher = new LineBatcher(5, batch -> {
+            LineBatcher batcher = new LineBatcher(5, 500, batch -> {
                 System.out.println("---- Batch of " + batch.size() + " lines ----");
                 for (String line : batch) {
                     System.out.println(line);
                 }
             }); 
-            LogTailer tailer = new LogTailer(filePath, batcher::accept);
+            LogTailer tailer = new LogTailer(filePath, batcher);
+            batcher.start();
             tailer.run();
+            batcher.close();
 
         } catch (IllegalArgumentException e){
             System.err.println("Illegal Argument " + e.getMessage());

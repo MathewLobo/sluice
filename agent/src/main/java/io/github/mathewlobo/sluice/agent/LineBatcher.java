@@ -3,46 +3,62 @@ package io.github.mathewlobo.sluice.agent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public class LineBatcher implements Consumer<String>{
     
     private final int batchSize;
-    private final LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();
+    private List<String> elementArr = new ArrayList<>();
 
     private final Consumer<List<String>> batchConsumer;
+    private final long flushIntervalMs;
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
-    public LineBatcher(int batchSize, Consumer<List<String>> batchConsumer) {
+    public LineBatcher(int batchSize, long flushIntervalMs, Consumer<List<String>> batchConsumer) {
 
         if (batchSize < 1) {
             throw new IllegalArgumentException("Batch size must be greater than 0. Provided: " + batchSize);
         }
+
+        if (flushIntervalMs < 1){
+            throw new IllegalArgumentException("flushIntervalMs must be atleast 1, got " + flushIntervalMs);
+        }
         
-        // If we get here, we know batchSize is valid (> 0)
         this.batchSize = batchSize; 
         this.batchConsumer = Objects.requireNonNull(batchConsumer, "batchConsumer cannot be null");
+        this.flushIntervalMs = flushIntervalMs;
     }
 
     @Override 
-    public void accept(String line){
+    public synchronized void accept(String line){
 
-        queue.offer(line);
+        elementArr.add(line);
 
-        if (queue.size()>= batchSize){
+        if (elementArr.size()>= batchSize){
             processBatch();
         }
     }
 
-    public synchronized void processBatch(){
-
-        List<String> batch = new ArrayList<>(this.batchSize);
-
-        queue.drainTo(batch,this.batchSize);
-
-        if (!batch.isEmpty()) {
-            batchConsumer.accept(batch);
+    private synchronized void processBatch() {
+        if (elementArr.isEmpty()) {
+            return;                          
         }
+
+        List<String> batch = elementArr;     
+        elementArr = new ArrayList<>();      
+        batchConsumer.accept(batch);         
+    }
+
+    public void start(){
+        scheduler.scheduleAtFixedRate(this::processBatch, flushIntervalMs, flushIntervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    public void close(){
+        processBatch();
+        scheduler.shutdown();
     }
 
 

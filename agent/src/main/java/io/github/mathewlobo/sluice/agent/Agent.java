@@ -13,7 +13,13 @@ public class Agent {
 
 
         try {
-            LogTailer tailer = new LogTailer(filePath, line -> System.out.println(line));
+            LineBatcher batcher = new LineBatcher(5, batch -> {
+                System.out.println("---- Batch of " + batch.size() + " lines ----");
+                for (String line : batch) {
+                    System.out.println(line);
+                }
+            }); 
+            LogTailer tailer = new LogTailer(filePath, batcher::accept);
             tailer.run();
 
         } catch (IllegalArgumentException e){

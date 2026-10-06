@@ -7,8 +7,14 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.github.mathewlobo.sluice.common.LogBatch;
+
 public class Server{
     private static final int PORT = 9000;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static void handleClient(Socket clientSocket){
 
@@ -18,11 +24,21 @@ public class Server{
                 clientSocket;
                 BufferedReader br = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8))
                 ){
+
                 System.out.println(client + ": Client Connected");
             
                 String message = br.readLine();
                 while (message != null){
-                    System.out.println(client + ": Message from Client: " + message);
+                    
+                    try{
+                        LogBatch batch = MAPPER.readValue(message, LogBatch.class);
+                        System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines");
+                        for (String line : batch.lines()) {
+                            System.out.println("    " + line);
+                        }
+                    }catch(JsonProcessingException e){
+                        System.err.println("Invalid JSon format " +e.getMessage());
+                    }
                     message = br.readLine();
                 }
                 System.out.println(client + ": Client Disconnected");

@@ -37,8 +37,12 @@ public class Server{
                     try{
                         LogBatch batch = MAPPER.readValue(message, LogBatch.class);
                         
-                        System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines");
-                        store.append(batch);
+
+                        boolean stored = store.append(batch);
+                        if (stored)
+                            System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines stored");
+                        else
+                            System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines already present");
                         writer.write("ACK "+batch.seq());
                         writer.newLine();
                         writer.flush();

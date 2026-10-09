@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
+import java.util.Map;
 
 import io.github.mathewlobo.sluice.common.LogBatch;
 
@@ -14,6 +16,7 @@ public class LogStore implements AutoCloseable{
     
     private static final Path filePath = Path.of("logs.dat");
     private final FileChannel fileChannel;
+    private final Map<String, Long> lastStoredSeq = new HashMap<>();
 
     public LogStore() throws IOException{
 
@@ -24,7 +27,12 @@ public class LogStore implements AutoCloseable{
             
     }
 
-    public synchronized void append(LogBatch batch) throws IOException{
+    public synchronized Boolean append(LogBatch batch) throws IOException{
+
+        long last = lastStoredSeq.getOrDefault(batch.agentId(), 0L);
+        if (batch.seq() <= last) {
+            return false;               // already stored, so skip writing
+        }
 
         StringBuilder sb = new StringBuilder();
         for ( String line: batch.lines()){
@@ -35,6 +43,10 @@ public class LogStore implements AutoCloseable{
             fileChannel.write(buffer);
         }
         fileChannel.force(false);
+        
+        lastStoredSeq.put(batch.agentId(), batch.seq());
+
+        return true; 
     }
 
     @Override
@@ -42,7 +54,7 @@ public class LogStore implements AutoCloseable{
         fileChannel.close();
     }
  
-    }
+}
 
 
                          

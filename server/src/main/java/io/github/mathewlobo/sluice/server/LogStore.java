@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import io.github.mathewlobo.sluice.common.LogBatch;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.ByteBuffer;
 
@@ -17,6 +18,7 @@ public class LogStore implements AutoCloseable{
     private static final Path filePath = Path.of("logs.dat");
     private final FileChannel fileChannel;
     private final Map<String, Long> lastStoredSeq = new HashMap<>();
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public LogStore() throws IOException{
 
@@ -27,18 +29,15 @@ public class LogStore implements AutoCloseable{
             
     }
 
-    public synchronized Boolean append(LogBatch batch) throws IOException{
+    public synchronized boolean append(LogBatch batch) throws IOException{
 
         long last = lastStoredSeq.getOrDefault(batch.agentId(), 0L);
         if (batch.seq() <= last) {
             return false;               // already stored, so skip writing
         }
 
-        StringBuilder sb = new StringBuilder();
-        for ( String line: batch.lines()){
-            sb.append(line).append("\n");
-        }
-        ByteBuffer buffer = ByteBuffer.wrap(sb.toString().getBytes(StandardCharsets.UTF_8));  
+        String s = MAPPER.writeValueAsString(batch) + "\n";
+        ByteBuffer buffer = ByteBuffer.wrap(s.getBytes(StandardCharsets.UTF_8));  
         while (buffer.hasRemaining()) {
             fileChannel.write(buffer);
         }

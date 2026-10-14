@@ -18,7 +18,6 @@ public class Agent {
 
         try {
             BatchSender sender = new BatchSender("localhost", 9000, "agent-1");
-            sender.connect();
             LineBatcher batcher = new LineBatcher(5, 500, sender);
             LogTailer tailer = new LogTailer(filePath, batcher);
             batcher.start();

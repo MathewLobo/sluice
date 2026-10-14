@@ -14,7 +14,12 @@ public class Agent {
 
 
         try {
-              BatchSender sender = new BatchSender("localhost", 9000, "agent-1");
+
+            CheckpointStore checkpointStore = new CheckpointStore(Path.of("agent-checkpoint.json"));
+            Checkpoint start = checkpointStore.load();
+            System.out.println("Resuming from " + start);
+
+            BatchSender sender = new BatchSender("localhost", 9000, "agent-1", checkpointStore, start);
             LineBatcher batcher = new LineBatcher(5, 500, sender);
             LogTailer tailer = new LogTailer(filePath, batcher);
             batcher.start();

@@ -24,16 +24,18 @@ public class BatchSender implements Consumer<List<String>>{
     private final int port;
     private final String agentId;
     private final ObjectMapper converter = new ObjectMapper();
-    private final AtomicLong sequence = new AtomicLong();   // starts at 0
+    private final AtomicLong sequence;   
     private Socket socket;
     private BufferedWriter writer;
     private BufferedReader reader;
+    private final CheckpointStore checkpointStore;
+    private long linesShipped;
 
     private static final int ACK_TIMEOUT_MS = 5000;
     private static final long INITIAL_BACKOFF_MS = 1_000;    // 1 second
     private static final long MAX_BACKOFF_MS = 20_000;
 
-    public BatchSender(String host, int port, String agentId){
+    public BatchSender(String host, int port, String agentId, CheckpointStore checkpointStore, Checkpoint start){
 
         this.host = Objects.requireNonNull(host, "host cannot be null");
         this.agentId = Objects.requireNonNull(agentId, "agentId cannot be null");
@@ -42,6 +44,11 @@ public class BatchSender implements Consumer<List<String>>{
         if (port < 1 || port > 65535){
             throw new IllegalArgumentException("port must be between 1 and 65535, got " + port);
         }
+        this.checkpointStore = Objects.requireNonNull(checkpointStore, "checkpointStore cannot be null");
+        Objects.requireNonNull(start, "start checkpoint cannot be null");
+
+        this.sequence = new AtomicLong(start.lastSeq());
+        this.linesShipped = start.linesShipped();
     }
 
     @Override
@@ -77,7 +84,12 @@ public class BatchSender implements Consumer<List<String>>{
                 if (!reply.equals("ACK " + lb.seq())) {
                     throw new IOException("unexpected reply for batch " + lb.seq() + ": " + reply);
                 }
+
                 System.out.println("ACKed batch " + lb.seq());
+                long newTotal = linesShipped + batch.size();
+                checkpointStore.save(new Checkpoint(newTotal, lb.seq()));
+                linesShipped = newTotal;
+                
                 return;
 
             } catch (IOException e) {

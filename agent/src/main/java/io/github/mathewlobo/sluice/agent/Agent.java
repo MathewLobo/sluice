@@ -1,11 +1,8 @@
 package io.github.mathewlobo.sluice.agent;
 
 import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
-import java.net.Socket;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
+
 
 public class Agent {
     public static void main(String[] args) {
@@ -17,7 +14,7 @@ public class Agent {
 
 
         try {
-            BatchSender sender = new BatchSender("localhost", 9000, "agent-1");
+              BatchSender sender = new BatchSender("localhost", 9000, "agent-1");
             LineBatcher batcher = new LineBatcher(5, 500, sender);
             LogTailer tailer = new LogTailer(filePath, batcher);
             batcher.start();

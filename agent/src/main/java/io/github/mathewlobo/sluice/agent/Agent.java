@@ -21,7 +21,7 @@ public class Agent {
 
             BatchSender sender = new BatchSender("localhost", 9000, "agent-1", checkpointStore, start);
             LineBatcher batcher = new LineBatcher(5, 500, sender);
-            LogTailer tailer = new LogTailer(filePath, batcher);
+            LogTailer tailer = new LogTailer(filePath, batcher, start.linesShipped());
             batcher.start();
             tailer.run();
             batcher.close();

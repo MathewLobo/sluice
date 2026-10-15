@@ -13,11 +13,13 @@ public class LogTailer {
 
     private final Path filePath;
     private final Consumer<String> lineConsumer;
+    private final long linesToSkip;
 
-    public LogTailer(Path filePath, Consumer<String> lineConsumer) {  // checks if file exists plus if its valid
+    public LogTailer(Path filePath, Consumer<String> lineConsumer, long linesToSkip) {  // checks if file exists plus if its valid
         
         this.filePath = Objects.requireNonNull(filePath, "filePath cannot be null");
         this.lineConsumer = Objects.requireNonNull(lineConsumer, "lineConsumer cannot be null");
+        
 
         if (!Files.exists(this.filePath)) {
             throw new IllegalArgumentException("Target log file does not exist: " + this.filePath.toAbsolutePath());
@@ -26,6 +28,12 @@ public class LogTailer {
         if (Files.isDirectory(this.filePath)) {
             throw new IllegalArgumentException("Path points to a directory, not a file: " + this.filePath.toAbsolutePath());
         }
+
+        if (linesToSkip < 0) {
+            throw new IllegalArgumentException("linesToSkip must be >= 0, got " + linesToSkip);
+        }
+        this.linesToSkip = linesToSkip;
+
     }
 
     public void run() throws IOException {
@@ -34,6 +42,9 @@ public class LogTailer {
 
             StringBuilder lineBuilder = new StringBuilder();
             int charCode;
+            long linesSkipped = 0;
+
+            System.out.println("Skipping " + linesToSkip + " lines");
 
             while (true) {
 
@@ -43,7 +54,10 @@ public class LogTailer {
 
                     if (c == '\n') {
                         // Complete line found -> hand it to consumer
-                        this.lineConsumer.accept(lineBuilder.toString());
+                        if(linesSkipped < linesToSkip)
+                            linesSkipped ++;
+                        else
+                            this.lineConsumer.accept(lineBuilder.toString());
                         lineBuilder.setLength(0);
                     } else if (c != '\r') {
                         lineBuilder.append(c);

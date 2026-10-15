@@ -9,3 +9,7 @@ target/
 # Local test data
 *.log
 *.dat
+
+# Agent runtime state
+agent-checkpoint.json
+*.tmp

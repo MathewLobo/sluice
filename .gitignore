@@ -13,3 +13,8 @@ target/
 # Agent runtime state
 agent-checkpoint.json
 *.tmp
+
+#Test data
+crash-test-run/
+
+crash-test-fail-*/

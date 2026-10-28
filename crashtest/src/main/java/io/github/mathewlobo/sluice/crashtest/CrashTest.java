@@ -15,19 +15,34 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
 
 public class CrashTest {
 
     private static final Path RUN_DIR = Path.of("crash-test-run");
     private static final Path SERVER_JAR = Path.of("server", "target", "server-0.1.0-SNAPSHOT.jar").toAbsolutePath();
     private static final Path AGENT_JAR = Path.of("agent", "target", "agent-0.1.0-SNAPSHOT.jar").toAbsolutePath();
+
     private static final int TOTAL_LINES = 5000;
-    private static final long WRITE_DELAY_MS = 1;
+    private static final long WRITE_DELAY_MS = 10;
     private static final AtomicBoolean isRunning = new AtomicBoolean(true);
-    private static final long DELIVERY_TIMEOUT_MS = 60_000;
+    private static final long DELIVERY_TIMEOUT_MS = 120_000;
     private static final ObjectMapper MAPPER = new ObjectMapper();
-  
+    
+    private static final AtomicReference<Process> serverRef = new AtomicReference<>();
+    private static final AtomicReference<Process> agentRef  = new AtomicReference<>();
+    private static final AtomicBoolean chaosOn = new AtomicBoolean(true);
+    private static final AtomicBoolean chaosOk = new AtomicBoolean(true);
+    private static final AtomicInteger kills = new AtomicInteger();
+    private static final long MIN_GAP_MS = 2000;
+    private static final long MAX_GAP_MS = 6000;
+    private static final long RESTART_DELAY_MS = 1000;
+
+
     private static void deleteDirectoryContent(Path dir) throws IOException {
         if (!Files.exists(dir)) {
             return;                          // nothing to clean
@@ -185,6 +200,43 @@ public class CrashTest {
         return pass;
     }
 
+    private static Thread startChaos() {
+        Thread t = new Thread(() -> {
+            try {
+                while (chaosOn.get()) {
+                    Thread.sleep(ThreadLocalRandom.current().nextLong(MIN_GAP_MS, MAX_GAP_MS + 1));
+                    if (!chaosOn.get()) break;   // main said stop while we slept
+
+                    boolean hitServer = ThreadLocalRandom.current().nextBoolean();
+                    AtomicReference<Process> ref = hitServer ? serverRef : agentRef;
+                    Path jar = hitServer ? SERVER_JAR : AGENT_JAR;
+                    String outFile = hitServer ? "server.out" : "agent.out";
+                    String name = hitServer ? "server" : "agent";
+
+                    kill(ref.get());
+                    int n = kills.incrementAndGet();
+                    System.out.println("Kill #" + n + ": " + name);
+
+                    Thread.sleep(RESTART_DELAY_MS);
+                    ref.set(startProcess(jar, outFile));
+                }
+            } catch (IOException e) {
+                System.out.println("CHAOS FAILED: could not restart process: " + e);
+                chaosOk.set(false);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "chaos");
+        t.start();
+        return t;
+    }
+
+    private static void kill(Process p) throws InterruptedException {
+        if (p != null) {
+            p.destroyForcibly();
+            p.waitFor();
+        }
+    }
 
 
     public static void main (String args[]) throws Exception{
@@ -203,40 +255,36 @@ public class CrashTest {
         Files.writeString(RUN_DIR.resolve("app.log"), "");
 
 
-        Process server = null;
-        Process agent = null;
-        try{
-            server = startProcess(SERVER_JAR, "server.out");
+        Thread chaos = null;
+        try {
+            serverRef.set(startProcess(SERVER_JAR, "server.out"));
             Thread.sleep(1000);
-            agent = startProcess(AGENT_JAR, "agent.out");
+            agentRef.set(startProcess(AGENT_JAR, "agent.out"));
 
             Thread writer = startWriter();
+            chaos = startChaos();
 
-            writer.join();          // wait until all lines are written
-            if (isRunning.get()){
-                System.out.println("Writer done: " + TOTAL_LINES + " lines");
-            }
-            else{
-                throw new IllegalStateException("Writer failed");
-            }
+            writer.join();
+            if (!isRunning.get()) throw new IllegalStateException("Writer failed");
+            System.out.println("Writer done: " + TOTAL_LINES + " lines");
+
+            chaosOn.set(false);
+            chaos.join();                 // wait for any in-progress restart to finish
+            if (!chaosOk.get()) throw new IllegalStateException("Chaos thread failed");
+            System.out.println("Chaos stopped after " + kills.get() + " kills");
+
             long shipped = waitForDelivery();
             System.out.println("Delivered (per checkpoint): " + shipped + " / " + TOTAL_LINES);
-        }finally{
-            
-            if (agent != null){
-                agent.destroyForcibly();  
-                agent.waitFor();
-            }
-            if (server != null){
-                server.destroyForcibly(); 
-                server.waitFor();
-            }
-
+        } finally {
+            chaosOn.set(false);
+            if (chaos != null) chaos.join();   // no restarts can happen after this
+            kill(agentRef.get());
+            kill(serverRef.get());
         }
 
         boolean pass = verify();
-        System.exit(pass ? 0 : 1);
-        
+        System.out.println("Kills: " + kills.get());
+        System.exit(pass ? 0 : 1);        
     }
 
 }

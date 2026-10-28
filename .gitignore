@@ -16,3 +16,5 @@ agent-checkpoint.json
 
 #Test data
 crash-test-run/
+
+crash-test-fail-*/

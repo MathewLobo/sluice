@@ -53,7 +53,7 @@ public class BatchSender implements Consumer<List<String>>{
 
     @Override
     public synchronized void accept(List<String> batch) {
-        LogBatch lb = new LogBatch(agentId, sequence.incrementAndGet(), batch);  // seq taken once
+        LogBatch lb = new LogBatch(agentId, sequence.incrementAndGet(), linesShipped + 1, batch);  // seq taken once
         long backoffMs = INITIAL_BACKOFF_MS;
 
         String json;

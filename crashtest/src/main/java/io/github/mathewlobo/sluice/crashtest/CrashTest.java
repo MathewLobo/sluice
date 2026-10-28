@@ -1,4 +1,5 @@
 package io.github.mathewlobo.sluice.crashtest;
+import io.github.mathewlobo.sluice.common.LogBatch;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -7,9 +8,12 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.stream.Stream;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -124,6 +128,63 @@ public class CrashTest {
 
     }
 
+    private static boolean verify() throws IOException {
+        Path logsFile = RUN_DIR.resolve("logs.dat");
+        if (!Files.exists(logsFile)) {
+            System.out.println("FAIL: logs.dat not found");
+            return false;
+        }
+
+        int[] counts = new int[TOTAL_LINES + 1];   // index = line number, 0 unused
+        long stored = 0;
+        int corrupt = 0;      // records that aren't valid JSON
+        int badLines = 0;     // valid JSON, but the text isn't "line NNNNNN" in range
+
+        for (String record : Files.readAllLines(logsFile)) {
+            if (record.isBlank()) continue;
+            LogBatch batch;
+            try {
+                batch = MAPPER.readValue(record, LogBatch.class);
+            } catch (JsonProcessingException e) {
+                corrupt++;
+                continue;
+            }
+            for (String logLine : batch.lines()) {
+                stored++;
+                try {
+                    int n = Integer.parseInt(logLine.trim().substring(5)); // "line 000123" -> 123
+                    if (n < 1 || n > TOTAL_LINES) { badLines++; continue; }
+                    counts[n]++;
+                } catch (NumberFormatException | IndexOutOfBoundsException e) {
+                    badLines++;
+                }
+            }
+        }
+
+        List<Integer> missing = new ArrayList<>();
+        List<Integer> duplicates = new ArrayList<>();
+        for (int n = 1; n <= TOTAL_LINES; n++) {
+            if (counts[n] == 0) missing.add(n);
+            else if (counts[n] > 1) duplicates.add(n);
+        }
+
+        boolean pass = missing.isEmpty() && duplicates.isEmpty() && corrupt == 0 && badLines == 0;
+
+        System.out.println("Written: " + TOTAL_LINES
+                + "  Stored: " + stored
+                + "  Missing: " + missing.size()
+                + "  Duplicates: " + duplicates.size()
+                + "  Corrupt: " + corrupt
+                + "  Bad lines: " + badLines);
+        if (!missing.isEmpty())
+            System.out.println("  First missing: " + missing.subList(0, Math.min(10, missing.size())));
+        if (!duplicates.isEmpty())
+            System.out.println("  First duplicates: " + duplicates.subList(0, Math.min(10, duplicates.size())));
+        System.out.println(pass ? "PASS" : "FAIL");
+
+        return pass;
+    }
+
 
 
     public static void main (String args[]) throws Exception{
@@ -172,7 +233,9 @@ public class CrashTest {
             }
 
         }
-       
+
+        boolean pass = verify();
+        System.exit(pass ? 0 : 1);
         
     }
 

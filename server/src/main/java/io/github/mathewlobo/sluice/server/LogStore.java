@@ -10,6 +10,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import io.github.mathewlobo.sluice.common.LogBatch;
 
@@ -20,15 +21,17 @@ import java.nio.ByteBuffer;
 
 public class LogStore implements AutoCloseable{
     
-    private static final Path filePath = Path.of("logs.dat");
+    private final Path filePath;
     private final FileChannel fileChannel;
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final Map<String, Long> lastStoredLine = new HashMap<>();
 
-    public LogStore() throws IOException {
+    public LogStore(Path filePath) throws IOException {
 
-        if (Files.exists(filePath)) {
-            try (BufferedReader bf = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+        this.filePath = Objects.requireNonNull(filePath, "File path cannot be null");
+
+        if (Files.exists(this.filePath)) {
+            try (BufferedReader bf = Files.newBufferedReader(this.filePath, StandardCharsets.UTF_8)) {
 
                 String line;
                 while ((line = bf.readLine()) != null) {
@@ -94,7 +97,7 @@ public class LogStore implements AutoCloseable{
     }
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         fileChannel.close();
     }
  

@@ -6,6 +6,7 @@ import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.io.OutputStreamWriter;
 import java.io.BufferedWriter;
 
@@ -63,7 +64,7 @@ public class Server{
         System.out.println("Server starting... waiting for client connection on port " + PORT);
 
         try (ServerSocket serverSocket = new ServerSocket(PORT);
-             LogStore store = new LogStore()){
+             LogStore store = new LogStore(Path.of("logs.dat"))){
 
             while (true){
                 try{

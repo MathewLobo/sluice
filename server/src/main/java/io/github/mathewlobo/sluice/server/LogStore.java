@@ -37,7 +37,7 @@ import io.github.mathewlobo.sluice.common.LogBatch;
 public class LogStore implements AutoCloseable {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int QUEUE_CAPACITY = 1000;   // bounded queue: at most this many batches waiting
+    private static final int QUEUE_CAPACITY = 5;   // bounded queue: at most this many batches waiting
     private static final int MAX_GROUP = 100;         // at most this many batches per fsync
 
     /** One request from a client thread: the batch, plus the "buzzer" the writer completes. */
@@ -97,13 +97,16 @@ public class LogStore implements AutoCloseable {
     public boolean append(LogBatch batch) throws IOException {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         try {
-            queue.put(new PendingWrite(batch, future));   // waits if the queue is full
+            // offer() never waits: if the queue is full it returns false right away.
+            // Telling the agent "busy" quickly is better than letting it wait toward its timeout.
+            if (!queue.offer(new PendingWrite(batch, future))) {
+                throw new StoreBusyException("queue full (" + QUEUE_CAPACITY + ")");
+            }
             return future.get();                          // waits until the writer completes it
         } catch (ExecutionException e) {
-            // The writer failed this batch (e.g. force() threw) -> no ACK
             throw new IOException("Write failed for batch " + batch.seq(), e.getCause());
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();           // restore the interrupt flag
+            Thread.currentThread().interrupt();
             throw new IOException("Interrupted while waiting for batch " + batch.seq(), e);
         }
     }

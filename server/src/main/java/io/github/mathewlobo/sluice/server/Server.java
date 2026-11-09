@@ -37,18 +37,24 @@ public class Server{
                     
                     try{
                         LogBatch batch = MAPPER.readValue(message, LogBatch.class);
-                        
 
-                        boolean stored = store.append(batch);
-                        if (stored)
-                            System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines stored");
-                        else
-                            System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines already present");
-                        writer.write("ACK "+batch.seq());
+                        try {
+                            boolean stored = store.append(batch);
+                            if (stored)
+                                System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines stored");
+                            else
+                                System.out.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": " + batch.lines().size() + " lines already present");
+                            writer.write("ACK " + batch.seq());
+                        } catch (StoreBusyException e) {
+                            // Overloaded: nothing was stored. Tell the agent to back off and resend.
+                            System.err.println(client + ": [" + batch.agentId() + "] batch #" + batch.seq() + ": BUSY");
+                            writer.write("BUSY " + batch.seq());
+                        }
                         writer.newLine();
                         writer.flush();
+
                     }catch(JsonProcessingException e){
-                        System.err.println("Invalid JSon format " +e.getMessage());
+                        System.err.println(client + ": Invalid JSON: " + e.getMessage());
                     }
                     message = br.readLine();
                 }

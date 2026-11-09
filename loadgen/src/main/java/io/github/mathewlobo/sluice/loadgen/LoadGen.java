@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,8 +31,10 @@ import io.github.mathewlobo.sluice.common.LogBatch;
  *
  * At the end it prints:
  *   - throughput: lines ACKed per second, across all agents
- *   - latency: time from sending a batch to receiving its ACK (p50, p99, max)
- *   - timeouts: how often a batch got no ACK within ACK_TIMEOUT_MS
+ *   - latency: time from FIRST sending a batch to receiving its ACK, including
+ *     any retries after BUSY or a timeout (p50, p99, max)
+ *   - timeouts: how often a batch got no reply within ACK_TIMEOUT_MS
+ *   - BUSY: how often the server said its queue was full
  *
  * Usage: java -jar loadgen.jar [agents] [durationSec] [batchSize]
  *   e.g. java -jar loadgen.jar 50 30 100   -> 50 agents, 30 seconds, 100 lines per batch
@@ -43,9 +46,15 @@ public class LoadGen {
     private static final String HOST = "localhost";
     private static final int PORT = 9000;
 
-    // Same as the real agent: if no ACK arrives in this time, give up on the
+    // Same as the real agent: if no reply arrives in this time, give up on the
     // connection, reconnect and resend the same batch.
     private static final int ACK_TIMEOUT_MS = 5000;
+
+    // After a BUSY reply, wait a RANDOM time in this range before resending.
+    // Random ("jitter") so that agents told BUSY at the same moment don't all
+    // come back at the same moment and overload the server again.
+    private static final long BUSY_PAUSE_MIN_MS = 20;
+    private static final long BUSY_PAUSE_MAX_MS = 100;
 
     // ObjectMapper is thread-safe once configured, so all agent threads can share one.
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -53,11 +62,12 @@ public class LoadGen {
     /**
      * What one simulated agent reports back when it finishes.
      *
-     * @param latenciesNanos one entry per ACKed batch: send -> ACK time in nanoseconds
+     * @param latenciesNanos one entry per ACKed batch: first send -> ACK time in nanoseconds
      * @param linesAcked     total lines the server confirmed for this agent
-     * @param timeouts       how many times this agent waited ACK_TIMEOUT_MS with no ACK
+     * @param timeouts       how many times this agent waited ACK_TIMEOUT_MS with no reply
+     * @param busyReplies    how many times the server answered BUSY (queue full)
      */
-    record AgentResult(List<Long> latenciesNanos, long linesAcked, int timeouts) { }
+    record AgentResult(List<Long> latenciesNanos, long linesAcked, int timeouts, int busyReplies) { }
 
     // ---- Entry point -------------------------------------------------------
 
@@ -91,7 +101,7 @@ public class LoadGen {
                 final int id = i;
 
                 // submit() starts the task right away and returns a Future.
-                // The lambda returns a value and may throw IOException, so Java
+                // The lambda returns a value and may throw checked exceptions, so Java
                 // treats it as a Callable (a Runnable can do neither).
                 futures.add(pool.submit(() -> runAgent(id, deadline, batchSize)));
             }
@@ -100,6 +110,7 @@ public class LoadGen {
             List<Long> allLatencies = new ArrayList<>();
             long totalLines = 0;
             int totalTimeouts = 0;
+            int totalBusy = 0;
 
             for (Future<AgentResult> f : futures) {
                 // get() WAITS until this agent has finished, then returns its result.
@@ -110,13 +121,14 @@ public class LoadGen {
                 allLatencies.addAll(r.latenciesNanos());
                 totalLines += r.linesAcked();
                 totalTimeouts += r.timeouts();
+                totalBusy += r.busyReplies();
             }
 
             // Use the REAL elapsed time, not durationSec: agents finish the batch
             // they were sending after the deadline passes.
             double elapsedSec = (System.nanoTime() - startNanos) / 1_000_000_000.0;
 
-            printReport(allLatencies, totalLines, totalTimeouts, elapsedSec);
+            printReport(allLatencies, totalLines, totalTimeouts, elapsedSec, totalBusy);
         }
     }
 
@@ -128,7 +140,8 @@ public class LoadGen {
      * Everything here is a LOCAL variable, so each thread has its own copy:
      * no shared state, no locks, no atomics needed.
      */
-    private static AgentResult runAgent(int id, long deadline, int batchSize) throws IOException {
+    private static AgentResult runAgent(int id, long deadline, int batchSize)
+            throws IOException, InterruptedException {
 
         // "load-" prefix makes these easy to tell apart from real agents in logs.dat.
         String agentId = "load-" + id;
@@ -138,6 +151,7 @@ public class LoadGen {
         long firstLine = 1;    // line number of the first line in the next batch (for dedup)
         long linesAcked = 0;
         int timeouts = 0;
+        int busy = 0;
 
         // The connection. null means "not connected", so the next attempt reconnects.
         Socket socket = null;
@@ -158,6 +172,11 @@ public class LoadGen {
                 }
                 String json = MAPPER.writeValueAsString(new LogBatch(agentId, seq, firstLine, lines));
 
+                // Start the clock ONCE per batch, before the first attempt.
+                // Latency = first send -> final ACK, INCLUDING any BUSY/timeout retries.
+                // That's the delay the agent really experiences.
+                long batchStart = System.nanoTime();
+
                 // INNER LOOP: keep trying THIS batch until it is ACKed (or time is up).
                 boolean acked = false;
                 while (!acked && System.nanoTime() < deadline) {
@@ -171,32 +190,37 @@ public class LoadGen {
                             reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
                         }
 
-                        // Time ONLY send -> ACK, which is what the server controls.
-                        // Building the JSON above is deliberately not included.
-                        long start = System.nanoTime();
                         writer.write(json);
                         writer.newLine();      // JSON Lines framing: one message per line
                         writer.flush();        // actually push the bytes onto the network
-                        String reply = reader.readLine();   // waits for "ACK <seq>"
-                        long latency = System.nanoTime() - start;
+                        String reply = reader.readLine();   // waits for "ACK <seq>" or "BUSY <seq>"
 
                         // null = the server closed the connection before replying.
                         if (reply == null) {
                             throw new IOException(agentId + ": server closed the connection");
                         }
+
+                        // Server overloaded (queue full): nothing was stored.
+                        // Keep the connection, pause a random short time, resend the same batch.
+                        if (reply.equals("BUSY " + seq)) {
+                            busy++;
+                            Thread.sleep(ThreadLocalRandom.current().nextLong(BUSY_PAUSE_MIN_MS, BUSY_PAUSE_MAX_MS + 1));
+                            continue;
+                        }
+
                         // Any reply other than our ACK means something is badly wrong.
                         if (!reply.equals("ACK " + seq)) {
                             throw new IllegalStateException(agentId + ": expected ACK " + seq + ", got " + reply);
                         }
 
                         // Success: record it and move on to the next batch.
-                        latencies.add(latency);
+                        latencies.add(System.nanoTime() - batchStart);
                         linesAcked += batchSize;
                         firstLine += batchSize;   // next batch starts right after this one
                         acked = true;             // ends the inner loop
 
                     } catch (SocketTimeoutException e) {
-                        // No ACK within ACK_TIMEOUT_MS: the server is overloaded.
+                        // No reply within ACK_TIMEOUT_MS: the server is overloaded.
                         // Count it, throw the connection away (a late ACK arriving on
                         // it could be mistaken for the next batch's ACK), and loop
                         // again to reconnect and resend the SAME batch.
@@ -217,17 +241,18 @@ public class LoadGen {
             closeQuietly(socket);
         }
 
-        return new AgentResult(latencies, linesAcked, timeouts);
+        return new AgentResult(latencies, linesAcked, timeouts, busy);
     }
 
     // ---- Reporting ---------------------------------------------------------
 
-    /** Prints throughput, batch/timeout counts and latency percentiles. */
-    private static void printReport(List<Long> latencies, long totalLines, int timeouts, double elapsedSec) {
+    /** Prints throughput, batch/timeout/BUSY counts and latency percentiles. */
+    private static void printReport(List<Long> latencies, long totalLines, int timeouts,
+                                    double elapsedSec, int busy) {
 
         // %,d / %,.0f = numbers with thousands separators (e.g. 1,234,000).
         System.out.printf("Lines ACKed: %,d  Throughput: %,.0f lines/s%n", totalLines, totalLines / elapsedSec);
-        System.out.println("Batches: " + latencies.size() + "  Timeouts: " + timeouts);
+        System.out.println("Batches: " + latencies.size() + "  Timeouts: " + timeouts + "  BUSY: " + busy);
 
         if (latencies.isEmpty()) {
             System.out.println("No batches ACKed");

@@ -17,6 +17,7 @@
         <module>agent</module>
         <module>server</module>
         <module>crashtest</module>
+        <module>loadgen</module>
     </modules>
 
     <properties>

@@ -18,3 +18,5 @@ agent-checkpoint.json
 crash-test-run/
 
 crash-test-fail-*/
+
+dependency-reduced-pom.xml

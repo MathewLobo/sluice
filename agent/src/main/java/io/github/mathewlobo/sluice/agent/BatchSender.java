@@ -81,6 +81,13 @@ public class BatchSender implements Consumer<List<String>>{
                 if (reply == null) {
                     throw new IOException("server closed connection before ACK for batch " + lb.seq());
                 }
+                if (reply.equals("BUSY " + lb.seq())) {
+                    // Server is overloaded: keep the connection, wait, resend the same batch
+                    System.err.println("Server busy for batch " + lb.seq() + " (retrying in " + backoffMs + " ms)");
+                    sleepBackoff(backoffMs, lb.seq());
+                    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                    continue;
+                }
                 if (!reply.equals("ACK " + lb.seq())) {
                     throw new IOException("unexpected reply for batch " + lb.seq() + ": " + reply);
                 }
@@ -93,18 +100,20 @@ public class BatchSender implements Consumer<List<String>>{
                 return;
 
             } catch (IOException e) {
-                System.err.println("Failed to send batch " + lb.seq() + ": " + e.getMessage()+ " (retrying in " + backoffMs + " ms)");                
+                System.err.println("Failed to send batch " + lb.seq() + ": " + e.getMessage() + " (retrying in " + backoffMs + " ms)");
                 closeQuietly();
-                
-                try {
-                    Thread.sleep(backoffMs);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Interrupted while retrying batch " + lb.seq(), ie);
-                }
-
+                sleepBackoff(backoffMs, lb.seq());
                 backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
             }
+        }
+    }
+
+    private void sleepBackoff(long ms, long seq) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while retrying batch " + seq, ie);
         }
     }
 
